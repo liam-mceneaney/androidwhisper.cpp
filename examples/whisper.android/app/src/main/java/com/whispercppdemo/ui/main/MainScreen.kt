@@ -11,12 +11,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.whispercppdemo.R
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Color
 
 
 @Composable
@@ -25,6 +33,8 @@ fun MainScreen(viewModel: MainScreenViewModel) {
     val canTranscribeState = viewModel.canTranscribe.observeAsState(initial = false)
     val isRecordingState = viewModel.isRecording.observeAsState(initial = false)
     val isStreamingState = viewModel.isStreaming.observeAsState(initial = false)
+    val samplesState = viewModel.samples.observeAsState(initial = emptyList())
+    val selectedSampleState = viewModel.selectedSample.observeAsState(initial = "")
 
 
     val messageLogState = viewModel.dataLog.observeAsState(initial = "")
@@ -39,7 +49,10 @@ fun MainScreen(viewModel: MainScreenViewModel) {
         onBenchmarkTapped = viewModel::benchmark,
         onTranscribeSampleTapped = viewModel::transcribeSample,
         onRecordTapped = viewModel::toggleRecord,
-        onStreamTapped = viewModel::toggleStream
+        onStreamTapped = viewModel::toggleStream,
+        samples = samplesState.value,
+        selectedSample = selectedSampleState.value,
+        onSampleSelected = { sampleName -> viewModel.onSampleSelected(sampleName) },
     )
 
 }
@@ -55,7 +68,10 @@ fun MainScreen(
     onBenchmarkTapped: () -> Unit,
     onTranscribeSampleTapped: () -> Unit,
     onRecordTapped: () -> Unit,
-    onStreamTapped: () -> Unit
+    onStreamTapped: () -> Unit,
+    samples: List<String>,
+    selectedSample: String,
+    onSampleSelected: (String) -> Unit
 ) {
     val scrollState = rememberScrollState()
 
@@ -71,6 +87,7 @@ fun MainScreen(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
+
             Column(verticalArrangement = Arrangement.SpaceBetween) {
                 Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     BenchmarkButton(enabled = canTranscribe, onClick = onBenchmarkTapped)
@@ -87,8 +104,45 @@ fun MainScreen(
                     isStreaming = isStreaming,
                     onClick = onStreamTapped
                 )
+                SampleSelector(samples = samples, onSampleSelected = onSampleSelected)
             }
             MessageLog(messageLog)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SampleSelector(samples: List<String>, onSampleSelected: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    var selectedSample by remember { mutableStateOf(samples.firstOrNull() ?: "") }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        TextField(
+            readOnly = true,
+            value = selectedSample,
+            onValueChange = { },
+            label = { Text("Select Sample") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            colors = ExposedDropdownMenuDefaults.textFieldColors()
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            samples.forEach { sample ->
+                DropdownMenuItem(
+                    text = { Text(sample) },
+                    onClick = {
+                        selectedSample = sample
+                        onSampleSelected(sample)
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 }

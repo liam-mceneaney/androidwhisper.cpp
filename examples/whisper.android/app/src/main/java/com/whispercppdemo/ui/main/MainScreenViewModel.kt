@@ -3,8 +3,12 @@ package com.whispercppdemo.ui.main
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.media.MediaPlayer
+import android.net.Uri
 import android.util.Log
+import androidx.activity.result.ActivityResultLauncher
+import androidx.core.app.ActivityCompat.startActivityForResult
 import androidx.core.content.PackageManagerCompat.LOG_TAG
 import androidx.core.net.toUri
 import androidx.lifecycle.LiveData
@@ -33,6 +37,12 @@ private const val TAG = "MainScreenViewModel" //logging tag
 class MainScreenViewModel(application: Application,
 ) : AndroidViewModel(application) {
 
+    private val _samples = MutableLiveData<List<String>>(listOf(/* Sample names */))
+    val samples: LiveData<List<String>> = _samples
+
+    private val _selectedSample = MutableLiveData<String>()
+    val selectedSample: LiveData<String> = _selectedSample
+
     private val _canTranscribe = MutableLiveData(false)
     val canTranscribe: LiveData<Boolean> = _canTranscribe
 
@@ -55,6 +65,7 @@ class MainScreenViewModel(application: Application,
 
     private val modelsPath = File(application.filesDir, "models")
     private val samplesPath = File(application.filesDir, "samples")
+    private val transcriptionsPath = File(application.filesDir, "transcriptions")
     private val recorder: Recorder = Recorder()
     private var whisperContext: WhisperContext? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -76,6 +87,7 @@ class MainScreenViewModel(application: Application,
             loadData()
         }
     }
+
 
     private suspend fun printSystemInfo() {
         printMessage(String.format("System Info: %s\n", WhisperContext.getSystemInfo()))
@@ -101,6 +113,7 @@ class MainScreenViewModel(application: Application,
     private suspend fun copyAssets() = withContext(Dispatchers.IO) {
         modelsPath.mkdirs()
         samplesPath.mkdirs()
+        transcriptionsPath.mkdirs()
         //application.copyData("models", modelsPath, ::printMessage)
         val appContext = getApplication<Application>()
         appContext.copyData("samples", samplesPath, ::printMessage)
@@ -154,6 +167,24 @@ class MainScreenViewModel(application: Application,
     private suspend fun getFirstSample(): File = withContext(Dispatchers.IO) {
         samplesPath.listFiles()!!.first()
     }
+    private suspend fun getSamples(): List<File> = withContext(Dispatchers.IO) {
+        samplesPath.listFiles()?.filter { it.isFile } ?: emptyList()
+    }
+    private suspend fun findSampleFileByName(sampleName: String): File? = withContext(Dispatchers.IO) {
+        return@withContext samplesPath.listFiles()?.find { it.nameWithoutExtension == sampleName }
+    }
+    fun onSampleSelected(sample: String) {
+        _selectedSample.value = sample
+        transcribeSelectedSample(sample)
+    }
+    private fun transcribeSelectedSample(sampleName: String) = viewModelScope.launch {
+        val sampleFile = findSampleFileByName(sampleName)
+        if (sampleFile != null) {
+            transcribeAudio(sampleFile)
+        } else {
+            Log.e(LOG_TAG, "no file found")
+        }
+    }
 
     private suspend fun readAudioSamples(file: File): FloatArray = withContext(Dispatchers.IO) {
         stopPlayback()
@@ -181,11 +212,30 @@ class MainScreenViewModel(application: Application,
     private val _transcriptionText = MutableLiveData<String>("")
     val transcriptionText: LiveData<String> = _transcriptionText
 
-    // Function to process transcription - maybe put this into LibWhisper.kt???
     @SuppressLint("RestrictedApi")
 
+    suspend fun saveTranscriptionToFile(text: String, filename: String) {
+        withContext(Dispatchers.IO) {
+            val outputFile = File(transcriptionsPath, filename)
+            outputFile.bufferedWriter().use { out ->
+                out.write(text)
+            }
+        }
+    }
+    suspend fun logProcessingTime(sampleFile: File, sampleTimeLength: Long, elapsedProcessingTime: Long) {
+        withContext(Dispatchers.IO) {
+            val logFileName = "${sampleFile.nameWithoutExtension}_processingTime.txt"
+            val logFile = File(transcriptionsPath, logFileName)
 
-    suspend fun transcribeAudio(file: File) {
+            logFile.bufferedWriter().use { out ->
+                out.write("Sample Time Length: $sampleTimeLength ms\n")
+                out.write("Elapsed Processing Time: $elapsedProcessingTime ms\n")
+            }
+        }
+    }
+
+    @SuppressLint("RestrictedApi")
+    private suspend fun transcribeAudio(file: File) {
         val canTranscribe = withContext(Dispatchers.Main) {
             _canTranscribe.value ?: false
         }
@@ -196,7 +246,6 @@ class MainScreenViewModel(application: Application,
         try {
             printMessage("Reading wave samples... ")
             val data = readAudioSamples(file)
-            //chunk it here???
             printMessage("${data.size / (16000 / 1000)} ms\n")
             printMessage("Transcribing data...\n")
             val start = System.currentTimeMillis()
@@ -210,9 +259,13 @@ class MainScreenViewModel(application: Application,
                         Log.i(TAG, "Text: $text")
                     }
                 }
+                val transcriptionFileName = "${file.nameWithoutExtension}_transcription.txt"
+                saveTranscriptionToFile(text, transcriptionFileName)
             }
+
             val elapsed = System.currentTimeMillis() - start
             printMessage("Done ($elapsed ms): $text\n")
+            logProcessingTime(file, start, elapsed)
         } catch (e: Exception) {
             Log.w(LOG_TAG, e)
             printMessage("${e.localizedMessage}\n")
@@ -403,5 +456,7 @@ private suspend fun Context.copyData(
             }
         }
         Log.v(TAG, "Copied $assetPath to $destination")
+
+
     }
 }
