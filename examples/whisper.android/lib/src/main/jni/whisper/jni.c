@@ -181,8 +181,8 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
     params.offset_ms = 0;
     params.no_context = true;
     params.single_segment = false;
-    params.initial_prompt ="drugs and units TXA migs milligrams mils milliliters fentanyl ketamine administering ccs cc";
-    params.print_special = false;
+    //about 72 token currently
+    params.initial_prompt ="treating patient alpha administering 10 mls of ketamine administering 10 milliliters of blood administering 1 mig of blood administering 10 mls of txa administering 2 ccs of blood administering 1 mil of fentanyl administering 1 mil of txa treating patient bravo treating patient charlie treating administering 10 mils of ketamine";
     params.suppress_non_speech_tokens = true;
 
     whisper_reset_timings(context);
