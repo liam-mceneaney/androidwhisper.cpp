@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 
 
 @Composable
@@ -35,11 +36,9 @@ fun MainScreen(viewModel: MainScreenViewModel) {
     val isStreamingState = viewModel.isStreaming.observeAsState(initial = false)
     val samplesState = viewModel.samples.observeAsState(initial = emptyList())
     val selectedSampleState = viewModel.selectedSample.observeAsState(initial = "")
-
-
     val messageLogState = viewModel.dataLog.observeAsState(initial = "")
     val processingTimeMessage = viewModel.processingTimeMessage.observeAsState(initial = "")
-
+    val context = LocalContext.current // Capture the context here
     MainScreen(
         canTranscribe = canTranscribeState.value,
         isRecording = isRecordingState.value,
@@ -53,7 +52,8 @@ fun MainScreen(viewModel: MainScreenViewModel) {
         samples = samplesState.value,
         selectedSample = selectedSampleState.value,
         onSampleSelected = { sampleName -> viewModel.onSampleSelected(sampleName) },
-    )
+        onTranscribeAllTapped = viewModel::onTranscribeAllTapped,
+        onExportTapped = { viewModel.onexportAllTranscriptionsToDownloads(context) }    )
 
 }
 
@@ -71,7 +71,9 @@ fun MainScreen(
     onStreamTapped: () -> Unit,
     samples: List<String>,
     selectedSample: String,
-    onSampleSelected: (String) -> Unit
+    onSampleSelected: (String) -> Unit,
+    onTranscribeAllTapped: () -> Unit,
+    onExportTapped: () -> Unit
 ) {
     val scrollState = rememberScrollState()
 
@@ -105,6 +107,8 @@ fun MainScreen(
                     onClick = onStreamTapped
                 )
                 SampleSelector(samples = samples, onSampleSelected = onSampleSelected)
+                TranscribeAllSamplesButton(enabled = canTranscribe, onClick = onTranscribeAllTapped)
+                ExportButton(enabled = true, onClick = onExportTapped)
             }
             MessageLog(messageLog)
         }
@@ -165,7 +169,20 @@ fun BenchmarkButton(enabled: Boolean, onClick: () -> Unit) {
 @Composable
 fun TranscribeSampleButton(enabled: Boolean, onClick: () -> Unit) {
     Button(onClick = onClick, enabled = enabled) {
-        Text("Transcribe sample")
+        Text("Transcribe 1st sample")
+    }
+}
+
+@Composable
+fun TranscribeAllSamplesButton(enabled: Boolean, onClick: () -> Unit) {
+    Button(onClick = onClick, enabled = enabled) {
+        Text("Transcribe All")
+    }
+}
+@Composable
+fun ExportButton(enabled: Boolean, onClick: () -> Unit) {
+    Button(onClick = onClick, enabled = enabled) {
+        Text("Export transcriptions")
     }
 }
 

@@ -171,7 +171,7 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
 
     // The below adapted from the Objective-C iOS sample
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    params.print_realtime = true;
+    params.print_realtime = false;
     params.print_progress = false;
     params.print_timestamps = true;
     params.print_special = false;
@@ -181,6 +181,9 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
     params.offset_ms = 0;
     params.no_context = true;
     params.single_segment = false;
+    params.initial_prompt ="drugs and units TXA migs milligrams mils milliliters fentanyl ketamine administering ccs cc";
+    params.print_special = false;
+    params.suppress_non_speech_tokens = true;
 
     whisper_reset_timings(context);
 
@@ -215,12 +218,11 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullStreamTranscribe(
     //        Optional text to provide as a prompt for the first window. This can be used to provide, or
     //        "prompt-engineer" a context for transcription, e.g. custom vocabularies or proper nouns
     //        to make it more likely to predict those word correctly.
-    //params.initial_prompt = "Transcription of Tactical Combat Casualty Drugs such as Fentanyl, Ibuprofen, Amoxicillin, Epinephrine, TXA, Hextend, Ketamine, Oral Transmucosal Fentanyl Citrate. ";
+    //params.initial_prompt =
     params.offset_ms = 0;
     params.no_context = true;
     params.single_segment   = true; //hard code for true, objc example has it based on a button press
     params.no_timestamps    = params.single_segment; //from streaming objc example
-
     whisper_reset_timings(context);
 
     LOGI("About to run whisper_full");

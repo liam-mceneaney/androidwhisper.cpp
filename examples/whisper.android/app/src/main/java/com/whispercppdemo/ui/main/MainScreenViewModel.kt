@@ -25,9 +25,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import com.whispercppdemo.recorder.Recorder
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
-import java.io.InputStream
+import android.os.Environment
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.nio.channels.FileChannel
 
 
 
@@ -140,6 +141,49 @@ class MainScreenViewModel(application: Application,
     fun transcribeSample() = viewModelScope.launch {
         transcribeAudio(getFirstSample())
     }
+    fun transcribeAllSamples() = viewModelScope.launch {
+        val sampleFiles = samplesPath.listFiles()
+        if (sampleFiles != null) {
+            for (sampleFile in sampleFiles) {
+                transcribeAudio(sampleFile)
+            }
+        } else {
+            Log.e(LOG_TAG, "No files found in the directory.")
+        }
+    }
+
+    fun exportFileToDownloads(context: Context, fileName: String, folderName: String = "Transcriptions") {
+        try {
+            // Source file in the app's internal storage
+            val sourceFile = File(context.filesDir, "transcriptions/$fileName")
+
+            // Target location within a specific folder in the Downloads directory
+            val downloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val targetFolder = File(downloadsPath, folderName) // Specify the folder name here
+            val targetFile = File(targetFolder, fileName)
+
+            // Ensure the target folder exists in the Downloads directory
+            if (!targetFolder.exists()) {
+                targetFolder.mkdirs()
+            }
+
+            // Initialize file channels for copying
+            val inChannel: FileChannel = FileInputStream(sourceFile).channel
+            val outChannel: FileChannel = FileOutputStream(targetFile).channel
+            inChannel.transferTo(0, inChannel.size(), outChannel)
+
+            // Close the channels
+            inChannel.close()
+            outChannel.close()
+
+            // Notify the user or log success
+            Log.d("FileExport", "File successfully exported to $folderName in Downloads")
+        } catch (e: Exception) {
+            // Handle any exceptions
+            Log.e("FileExport", "Error exporting file to $folderName: ${e.message}")
+        }
+    }
+
 
     private suspend fun runBenchmark(nthreads: Int) {
         val canTranscribeNow = withContext(Dispatchers.Main) {
@@ -177,6 +221,10 @@ class MainScreenViewModel(application: Application,
         _selectedSample.value = sample
         transcribeSelectedSample(sample)
     }
+
+    fun onTranscribeAllTapped() {
+        transcribeAllSamples()
+    }
     private fun transcribeSelectedSample(sampleName: String) = viewModelScope.launch {
         val sampleFile = findSampleFileByName(sampleName)
         if (sampleFile != null) {
@@ -185,6 +233,7 @@ class MainScreenViewModel(application: Application,
             Log.e(LOG_TAG, "no file found")
         }
     }
+
 
     private suspend fun readAudioSamples(file: File): FloatArray = withContext(Dispatchers.IO) {
         stopPlayback()
@@ -231,6 +280,26 @@ class MainScreenViewModel(application: Application,
                 out.write("Sample Time Length: $sampleTimeLength ms\n")
                 out.write("Elapsed Processing Time: $elapsedProcessingTime ms\n")
             }
+        }
+    }
+    suspend fun exportAllTranscriptionsToDownloads(context: Context) = withContext(Dispatchers.IO) {
+        // Directory containing the transcription files
+        val transcriptionsDir = File(context.filesDir, "transcriptions")
+
+        // Check if the directory exists and is a directory
+        if (transcriptionsDir.exists() && transcriptionsDir.isDirectory) {
+            // List all files in the directory
+            val files = transcriptionsDir.listFiles()
+            files?.forEach { file ->
+                // Export each file to the Downloads directory
+                exportFileToDownloads(context, file.name)
+            }
+        }
+    }
+    fun onexportAllTranscriptionsToDownloads(context: Context) {
+        viewModelScope.launch {
+            // Assuming exportAllTranscriptionsToDownloads is defined elsewhere and is a suspend function
+            exportAllTranscriptionsToDownloads(context)
         }
     }
 
