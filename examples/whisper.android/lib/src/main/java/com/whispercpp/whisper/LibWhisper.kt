@@ -22,6 +22,8 @@ class WhisperContext private constructor(private var ptr: Long) {
         Log.d(LOG_TAG, "Selecting $numThreads threads")
         WhisperLib.fullTranscribe(ptr, numThreads, data)
         val textCount = WhisperLib.getTextSegmentCount(ptr)
+        Log.d(LOG_TAG, "Whisper textCount = $textCount")
+
         return@withContext buildString {
             for (i in 0 until textCount) {
                 append(WhisperLib.getTextSegment(ptr, i))
@@ -41,6 +43,33 @@ class WhisperContext private constructor(private var ptr: Long) {
         }
     }
 
+    suspend fun guidedTranscribe(data: FloatArray, grammarFile: File) = withContext(scope.coroutineContext) {
+        require(ptr != 0L)
+        val grammarString = grammarFile.readText(Charsets.UTF_8)
+        val grammarFilePath = grammarFile.absolutePath
+        //Log.d(LOG_TAG, "Grammar Rules:  $grammarString")
+
+        Log.d(LOG_TAG, "Guiding Transcription through $grammarFile")
+
+        val numThreads = WhisperCpuConfig.preferredThreadCount
+        Log.d(LOG_TAG, "Selecting $numThreads threads")
+//        val result = WhisperLib.testGrammarParser(grammarString)
+//        Log.d("GrammarParserTest", result.toString()); // Will log "Grammar parsed successfully" or "Failed to parse grammar"
+        try {
+            Log.d(LOG_TAG,"tested grammar")
+            WhisperLib.guidedTranscribe(ptr, numThreads, data, grammarFilePath)
+
+            val textCount = WhisperLib.getTextSegmentCount(ptr)
+            return@withContext buildString {
+                for (i in 0 until textCount) {
+                    append(WhisperLib.getTextSegment(ptr, i))
+                }
+            }
+        } finally {
+            // Ensure to free the parsed grammar data after use
+//            WhisperLib.freeGrammarData(grammarDataPtr)
+        }
+    }
     suspend fun benchMemory(nthreads: Int): String = withContext(scope.coroutineContext) {
         return@withContext WhisperLib.benchMemcpy(nthreads)
     }
@@ -141,12 +170,15 @@ private class WhisperLib {
         external fun initContext(modelPath: String): Long
         external fun freeContext(contextPtr: Long)
         external fun fullTranscribe(contextPtr: Long, numThreads: Int, audioData: FloatArray)
+        external fun fullStreamTranscribe(contextPtr: Long, numThreads: Int, audioData: FloatArray)
         external fun getTextSegmentCount(contextPtr: Long): Int
         external fun getTextSegment(contextPtr: Long, index: Int): String
         external fun getSystemInfo(): String
         external fun benchMemcpy(nthread: Int): String
         external fun benchGgmlMulMat(nthread: Int): String
-        external fun fullStreamTranscribe(contextPtr: Long, numThreads: Int, audioData: FloatArray)
+        external fun guidedTranscribe(contextPtr: Long, numThreads: Int, audioData: FloatArray, grammarDataPtr: String)
+        external fun testGrammarParser(grammarString: String)
+
     }
 }
 

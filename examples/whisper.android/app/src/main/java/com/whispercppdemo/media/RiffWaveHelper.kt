@@ -2,12 +2,30 @@ package com.whispercppdemo.media
 
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 fun decodeWaveFile(file: File): FloatArray {
     val baos = ByteArrayOutputStream()
     file.inputStream().use { it.copyTo(baos) }
+    val buffer = ByteBuffer.wrap(baos.toByteArray())
+    buffer.order(ByteOrder.LITTLE_ENDIAN)
+    val channel = buffer.getShort(22).toInt()
+    buffer.position(44)
+    val shortBuffer = buffer.asShortBuffer()
+    val shortArray = ShortArray(shortBuffer.limit())
+    shortBuffer.get(shortArray)
+    return FloatArray(shortArray.size / channel) { index ->
+        when (channel) {
+            1 -> (shortArray[index] / 32767.0f).coerceIn(-1f..1f)
+            else -> ((shortArray[2*index] + shortArray[2*index + 1])/ 32767.0f / 2.0f).coerceIn(-1f..1f)
+        }
+    }
+}
+fun decodeInputStream(inputStream: InputStream): FloatArray {
+    val baos = ByteArrayOutputStream()
+    inputStream.use { it.copyTo(baos) }
     val buffer = ByteBuffer.wrap(baos.toByteArray())
     buffer.order(ByteOrder.LITTLE_ENDIAN)
     val channel = buffer.getShort(22).toInt()

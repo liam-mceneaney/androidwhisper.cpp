@@ -1,5 +1,13 @@
 package com.whispercppdemo.ui.main
 
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Environment
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -24,13 +32,15 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.documentfile.provider.DocumentFile
+import java.io.File
 
 
 @Composable
 fun MainScreen(viewModel: MainScreenViewModel) {
-
+    // Existing state observations
+    val context = LocalContext.current
     val canTranscribeState = viewModel.canTranscribe.observeAsState(initial = false)
     val isRecordingState = viewModel.isRecording.observeAsState(initial = false)
     val isStreamingState = viewModel.isStreaming.observeAsState(initial = false)
@@ -38,7 +48,10 @@ fun MainScreen(viewModel: MainScreenViewModel) {
     val selectedSampleState = viewModel.selectedSample.observeAsState(initial = "")
     val messageLogState = viewModel.dataLog.observeAsState(initial = "")
     val processingTimeMessage = viewModel.processingTimeMessage.observeAsState(initial = "")
-    val context = LocalContext.current // Capture the context here
+
+    // Observe the selected directory state
+    val selectedDirectoryState = viewModel.selectedDirectory.observeAsState(initial = null)
+
     MainScreen(
         canTranscribe = canTranscribeState.value,
         isRecording = isRecordingState.value,
@@ -51,11 +64,14 @@ fun MainScreen(viewModel: MainScreenViewModel) {
         onStreamTapped = viewModel::toggleStream,
         samples = samplesState.value,
         selectedSample = selectedSampleState.value,
+        selectedDirectory = selectedDirectoryState.value,
         onSampleSelected = { sampleName -> viewModel.onSampleSelected(sampleName) },
+        onDirectorySelected = { directory -> viewModel.onDirectorySelected(directory) },
         onTranscribeAllTapped = viewModel::onTranscribeAllTapped,
-        onExportTapped = { viewModel.onexportAllTranscriptionsToDownloads(context) }    )
-
+        onExportTapped = { viewModel.onExportAllTranscriptionsToDownloads(context) }
+    )
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,7 +86,9 @@ fun MainScreen(
     onRecordTapped: () -> Unit,
     onStreamTapped: () -> Unit,
     samples: List<String>,
-    selectedSample: String,
+    selectedSample: String?,
+    selectedDirectory: String?,
+    onDirectorySelected: (String) -> Unit,
     onSampleSelected: (String) -> Unit,
     onTranscribeAllTapped: () -> Unit,
     onExportTapped: () -> Unit
@@ -93,7 +111,7 @@ fun MainScreen(
             Column(verticalArrangement = Arrangement.SpaceBetween) {
                 Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     BenchmarkButton(enabled = canTranscribe, onClick = onBenchmarkTapped)
-                    TranscribeSampleButton(enabled = canTranscribe, onClick = onTranscribeSampleTapped)
+                    //TranscribeSampleButton(enabled = canTranscribe, onClick = onTranscribeSampleTapped)
                 }
                 RecordSection(
                     enabled = canTranscribe,
@@ -106,7 +124,14 @@ fun MainScreen(
                     isStreaming = isStreaming,
                     onClick = onStreamTapped
                 )
-                SampleSelector(samples = samples, onSampleSelected = onSampleSelected)
+
+                SampleSelector(
+                    selectedDirectory = selectedDirectory,
+                    selectedSample = selectedSample ?: "select a Sample",  // Use placeholder if null
+                    onSampleSelected = onSampleSelected,
+                    onDirectorySelected = onDirectorySelected
+                )
+
                 TranscribeAllSamplesButton(enabled = canTranscribe, onClick = onTranscribeAllTapped)
                 ExportButton(enabled = true, onClick = onExportTapped)
             }
@@ -117,17 +142,70 @@ fun MainScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SampleSelector(samples: List<String>, onSampleSelected: (String) -> Unit) {
+fun SampleSelector(
+    selectedDirectory: String?,
+    selectedSample: String,
+    onSampleSelected: (String) -> Unit,
+    onDirectorySelected: (String) -> Unit
+) {
+    val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
-    var selectedSample by remember { mutableStateOf(samples.firstOrNull() ?: "") }
+    var samples by remember { mutableStateOf(listOf<String>()) }
+    var selectedSampleState by remember { mutableStateOf(selectedSample) }
 
+    val directoryPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            Log.d("SampleSelector", "Selected URI: $uri")
+            onDirectorySelected(uri.toString())  // Store the URI as a string if needed
+            samples = getSampleFiles(context, uri)
+        } else {
+            Log.e("SampleSelector", "No URI obtained")
+        }
+    }
+    LaunchedEffect(selectedDirectory) {
+        selectedDirectory?.let {
+            try {
+                val uri = Uri.parse(it)
+                Log.d("SampleSelector", "Using stored URI: $uri")
+                samples = getSampleFiles(context, uri)
+                if (selectedSampleState.isEmpty() && samples.isNotEmpty()) {
+                    selectedSampleState = samples.first()
+                    onSampleSelected(selectedSampleState)
+                }
+            } catch (e: IllegalArgumentException) {
+                Log.e("SampleSelector", "Invalid URI: $it", e)
+            }
+        }
+    }
+
+    // UI for directory selection
+    Row {
+        Button(
+            onClick = {
+                directoryPickerLauncher.launch(null)
+            },
+            modifier = Modifier.padding(end = 8.dp)
+        ) {
+            Text("Select Directory")
+        }
+        TextField(
+            readOnly = true,
+            value = selectedDirectory ?: "No directory selected",
+            onValueChange = { },
+            modifier = Modifier.weight(1f)
+        )
+    }
+
+    // Dropdown for sample selection
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = !expanded }
     ) {
         TextField(
             readOnly = true,
-            value = selectedSample,
+            value = selectedSampleState,
             onValueChange = { },
             label = { Text("Select Sample") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
@@ -141,7 +219,7 @@ fun SampleSelector(samples: List<String>, onSampleSelected: (String) -> Unit) {
                 DropdownMenuItem(
                     text = { Text(sample) },
                     onClick = {
-                        selectedSample = sample
+                        selectedSampleState = sample
                         onSampleSelected(sample)
                         expanded = false
                     }
@@ -150,6 +228,15 @@ fun SampleSelector(samples: List<String>, onSampleSelected: (String) -> Unit) {
         }
     }
 }
+
+
+
+private fun getSampleFiles(context: Context, uri: Uri): List<String> {
+    val documentFile = DocumentFile.fromTreeUri(context, uri)
+    return documentFile?.listFiles()?.mapNotNull { it.name } ?: emptyList()
+
+}
+
 
 
 @Composable
@@ -219,11 +306,11 @@ fun RecordSection(enabled: Boolean, isRecording: Boolean, processingTimeMessage:
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth()
     ) {
-        RecordButton(
-            enabled = enabled,
-            isRecording = isRecording,
-            onClick = onClick
-        )
+//        RecordButton(
+//            enabled = enabled,
+//            isRecording = isRecording,
+//            onClick = onClick
+//        )
         Spacer(Modifier.width(8.dp))
         Text(text = processingTimeMessage)
     }

@@ -4,9 +4,12 @@
 #include <android/log.h>
 #include <stdlib.h>
 #include <sys/sysinfo.h>
+#include <stdint.h>
 #include <string.h>
 #include "whisper.h"
 #include "ggml.h"
+
+
 
 #define UNUSED(x) (void)(x)
 #define TAG "JNI"
@@ -171,41 +174,6 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
 
     // The below adapted from the Objective-C iOS sample
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    params.print_realtime = false;
-    params.print_progress = false;
-    params.print_timestamps = true;
-    params.print_special = false;
-    params.translate = false;
-    params.language = "en";
-    params.n_threads = num_threads;
-    params.offset_ms = 0;
-    params.no_context = true;
-    params.single_segment = false;
-    //about 72 token currently
-    params.initial_prompt ="treating patient alpha administering 10 mls of ketamine administering 10 milliliters of blood administering 1 mig of blood administering 10 mls of txa administering 2 ccs of blood administering 1 mil of fentanyl administering 1 mil of txa treating patient bravo treating patient charlie treating administering 10 mils of ketamine";
-    params.suppress_non_speech_tokens = true;
-
-    whisper_reset_timings(context);
-
-    LOGI("About to run whisper_full");
-    if (whisper_full(context, params, audio_data_arr, audio_data_length) != 0) {
-        LOGI("Failed to run the model");
-    } else {
-        whisper_print_timings(context);
-    }
-    (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
-}
-//streaming attempt:
-JNIEXPORT void JNICALL
-Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullStreamTranscribe(
-        JNIEnv *env, jobject thiz, jlong context_ptr, jint num_threads, jfloatArray audio_data) {
-    UNUSED(thiz);
-    struct whisper_context *context = (struct whisper_context *) context_ptr;
-    jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
-    const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
-
-    // The below adapted from the Objective-C iOS sample
-    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.print_realtime = true;
     params.print_progress = false;
     params.print_timestamps = true;
@@ -218,11 +186,11 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullStreamTranscribe(
     //        Optional text to provide as a prompt for the first window. This can be used to provide, or
     //        "prompt-engineer" a context for transcription, e.g. custom vocabularies or proper nouns
     //        to make it more likely to predict those word correctly.
-    //params.initial_prompt =
     params.offset_ms = 0;
     params.no_context = true;
     params.single_segment   = true; //hard code for true, objc example has it based on a button press
     params.no_timestamps    = params.single_segment; //from streaming objc example
+
     whisper_reset_timings(context);
 
     LOGI("About to run whisper_full");
@@ -233,6 +201,104 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullStreamTranscribe(
     }
     (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
 }
+
+//streaming attempt:
+JNIEXPORT void JNICALL
+Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullStreamTranscribe(
+        JNIEnv *env, jobject thiz, jlong context_ptr, jint num_threads, jfloatArray audio_data) {
+    UNUSED(thiz);
+    struct whisper_context *context = (struct whisper_context *) context_ptr;
+    jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
+    const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
+    //to view what each param does go to: C:\Users\Liam\CSCT-ASR-Android\lib\src\whisper.cpp\bindings\java\src\main\java\io\github\ggerganov\whispercpp\params\WhisperHParams.java
+    // The below adapted from the Objective-C iOS sample
+    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+//    params.print_realtime = true; //documents say to use callback instead
+    params.print_progress = false;
+    params.print_timestamps = true;
+    params.print_special = false;
+    params.translate = false;
+    params.language = "en";
+    params.n_threads = num_threads; //how many threads can I use on an S23?
+    //potentially use an initial prompt for custom vocabularies?
+    // initial_prompt: Optional[str]
+    //        Optional text to provide as a prompt for the first window. This can be used to provide, or
+    //        "prompt-engineer" a context for transcription, e.g. custom vocabularies or proper nouns
+    //        to make it more likely to predict those word correctly.
+    //params.initial_prompt = "Transcription of Tactical Combat Casualty Drugs such as Fentanyl, Ibuprofen, Amoxicillin, Epinephrine, TXA, Hextend, Ketamine, Oral Transmucosal Fentanyl Citrate. ";
+    params.offset_ms = 0;
+    params.audio_ctx = 768; //this reduces how much audio whisper needs to process.  1500 is 30 seconds of audio, 768 is a multiple of 8 which apparently makes math easier
+    params.no_context = true;
+    params.prompt_tokens = "treating patient alpha treating patient bravo treating patient charlie administering 10 mg of fentanyl administering 10 mg of ketamine administering 5 micrograms of TXA administering 3 CCs of saline administering 1 gram of advil";
+    params.single_segment   = true; //hard code for true, objc example has it based on a button press
+    params.no_timestamps    = params.single_segment; //from streaming objc example
+    params.suppress_non_speech_tokens = true; //get rid of punctuation and other things can find tokens to add in whisper.cpp in the lib
+    params.split_on_word = true;
+    params.grammar_penalty = 100.0f;
+//    params.grammar_rules = ;
+
+
+    whisper_reset_timings(context);
+
+    LOGI("About to run whisper_full");
+    if (whisper_full(context, params, audio_data_arr, audio_data_length) != 0) {
+        LOGI("Failed to run the model");
+    } else {
+        whisper_print_timings(context);
+    }
+    (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
+}
+
+JNIEXPORT void JNICALL
+Java_com_whispercpp_whisper_WhisperLib_00024Companion_guidedTranscribe(
+        JNIEnv *env, jobject thiz, jlong context_ptr, jint num_threads, jfloatArray audio_data, jlong grammarDataPtr) {
+
+//    grammar_data_t* grammarData = (grammar_data_t*)(intptr_t)grammarDataPtr;
+
+    UNUSED(thiz);
+    struct whisper_context *context = (struct whisper_context *) context_ptr;
+    jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
+    const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
+    //to view what each param does go to: C:\Users\Liam\CSCT-ASR-Android\lib\src\whisper.cpp\bindings\java\src\main\java\io\github\ggerganov\whispercpp\params\WhisperHParams.java
+    // The below adapted from the Objective-C iOS sample
+    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+//    params.print_realtime = true; //documents say to use callback instead
+    params.print_progress = false;
+    params.print_timestamps = true;
+    params.print_special = false;
+    params.translate = false;
+    params.language = "en";
+    params.n_threads = num_threads; //how many threads can I use on an S23?
+    //potentially use an initial prompt for custom vocabularies?  this only works for the very first call? initial prompt won't work for the rest of the transcription? but it gets called every time a chunk is sent, so mayyybe
+    // initial_prompt: Optional[str]
+    //        Optional text to provide as a prompt for the first window. This can be used to provide, or
+    //        "prompt-engineer" a context for transcription, e.g. custom vocabularies or proper nouns
+    //        to make it more likely to predict those word correctly.
+    params.offset_ms = 0;
+    params.audio_ctx = 768; //this reduces how much audio whisper needs to process.  1500 is 30 seconds of audio, 768 is a multiple of 8 which apparently makes math easier
+    params.no_context = true;
+    params.prompt_tokens = "treating patient alpha treating patient bravo treating patient charlie administering 10 mg of fentanyl administering 10 mg of ketamine administering 5 micrograms of TXA administering 3 CCs of saline administering 1 gram of advil";
+    params.single_segment   = true; //hard code for true, objc example has it based on a button press
+    params.no_timestamps    = params.single_segment; //from streaming objc example
+    params.suppress_non_speech_tokens = true; //get rid of punctuation and other things can find tokens to add in whisper.cpp in the lib
+    params.split_on_word = true;
+//    params.grammar_rules = grammarData->rules;
+//    params.n_grammar_rules = grammarData->n_rules;
+
+
+
+    whisper_reset_timings(context);
+
+    LOGI("About to run guided_whisper_full");
+    if (whisper_full(context, params, audio_data_arr, audio_data_length) != 0) {
+        LOGI("Failed to run the model");
+    } else {
+        whisper_print_timings(context);
+    }
+    (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
+}
+
+
 JNIEXPORT jint JNICALL
 Java_com_whispercpp_whisper_WhisperLib_00024Companion_getTextSegmentCount(
         JNIEnv *env, jobject thiz, jlong context_ptr) {
@@ -268,7 +334,6 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_benchMemcpy(JNIEnv *env, j
     UNUSED(thiz);
     const char *bench_ggml_memcpy = whisper_bench_memcpy_str(n_threads);
     jstring string = (*env)->NewStringUTF(env, bench_ggml_memcpy);
-    return string;
 }
 
 JNIEXPORT jstring JNICALL
@@ -277,5 +342,4 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_benchGgmlMulMat(JNIEnv *en
     UNUSED(thiz);
     const char *bench_ggml_mul_mat = whisper_bench_ggml_mul_mat_str(n_threads);
     jstring string = (*env)->NewStringUTF(env, bench_ggml_mul_mat);
-    return string;
 }

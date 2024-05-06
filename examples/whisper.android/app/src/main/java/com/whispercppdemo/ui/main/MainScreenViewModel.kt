@@ -26,10 +26,20 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import com.whispercppdemo.recorder.Recorder
 import android.os.Environment
+import android.provider.OpenableColumns
+import androidx.documentfile.provider.DocumentFile
+import com.konovalov.vad.silero.VadSilero
+import com.konovalov.vad.silero.config.FrameSize
+import com.konovalov.vad.silero.config.Mode
+import com.konovalov.vad.silero.config.SampleRate
+import com.whispercppdemo.media.decodeInputStream
 import java.io.FileInputStream
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import java.io.IOException
+import java.io.InputStream
 import java.nio.channels.FileChannel
-
+import kotlin.math.min
 
 
 private const val TAG = "MainScreenViewModel" //logging tag
@@ -37,11 +47,55 @@ private const val TAG = "MainScreenViewModel" //logging tag
 
 class MainScreenViewModel(application: Application,
 ) : AndroidViewModel(application) {
+    private lateinit var vad: VadSilero
+
+    private val _speechDetected = MutableLiveData(false)
+    val speechDetected: LiveData<Boolean> = _speechDetected
+
+    private val _selectedDirectory = MutableLiveData<String>("")
+    val selectedDirectory: LiveData<String> = _selectedDirectory
+
+    private val _statusMessage = MutableLiveData<String>("Waiting for Files")
+    val statusMessage = _statusMessage
+    fun onDirectorySelected(directoryUri: String) {
+        _selectedDirectory.value = directoryUri
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                updateSamplesFromDirectory(directoryUri)
+//                copyFilesToSamplesDirectory(getApplication<Application>().applicationContext, Uri.parse(directoryUri))
+                withContext(Dispatchers.Main) {
+                    _statusMessage.value = "Files ready for use."
+                    Log.i(TAG, "Files Copied")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _statusMessage.value = "Error processing files."
+                    Log.i(TAG, "Files NOT Copied!!")
+
+                }
+            }
+        }
+    }
+
+    private fun updateSamplesFromDirectory(directory: String) {
+        val dirFile = File(directory)
+        val samples = if (dirFile.exists() && dirFile.isDirectory) {
+            dirFile.listFiles()?.filter { it.isFile }?.map { it.name } ?: listOf()
+        } else {
+            listOf()
+        }
+        _samples.value = samples
+
+        // Optionally, reset the selected sample if the new directory doesn't contain the previously selected sample
+//        if (!samples.contains(_selectedSample.value)) {
+//            _selectedSample.value = samples.firstOrNull()
+//        }
+    }
 
     private val _samples = MutableLiveData<List<String>>(listOf(/* Sample names */))
     val samples: LiveData<List<String>> = _samples
 
-    private val _selectedSample = MutableLiveData<String>()
+    private val _selectedSample = MutableLiveData<String>("")
     val selectedSample: LiveData<String> = _selectedSample
 
     private val _canTranscribe = MutableLiveData(false)
@@ -79,14 +133,25 @@ class MainScreenViewModel(application: Application,
         var audioBufferF32: MutableList<Float> = mutableListOf()
     )
 
-
-
-
+    private fun loadSamples() {
+        viewModelScope.launch {
+            val files = getSamples()
+            _samples.value = files.map { it.name }
+        }
+    }
     init {
         viewModelScope.launch {
             printSystemInfo()
             loadData()
+            loadSamples()
         }
+        vad = VadSilero(
+            getApplication(),
+            SampleRate.SAMPLE_RATE_16K,
+            FrameSize.FRAME_SIZE_512, // 512 frame size is about 32ms of audio data
+            Mode.VERY_AGGRESSIVE,
+            silenceDurationMs = 1000
+        )
     }
 
 
@@ -115,11 +180,14 @@ class MainScreenViewModel(application: Application,
         modelsPath.mkdirs()
         samplesPath.mkdirs()
         transcriptionsPath.mkdirs()
-        //application.copyData("models", modelsPath, ::printMessage)
         val appContext = getApplication<Application>()
-        appContext.copyData("samples", samplesPath, ::printMessage)
+
+        appContext.copyData("models", modelsPath, ::printMessage)
+        //        appContext.copyData("samples", samplesPath, ::printMessage)
         printMessage("All data copied to working directory.\n")
     }
+
+
 
     private suspend fun loadBaseModel() = withContext(Dispatchers.IO) {
         printMessage("Loading model...\n")
@@ -139,16 +207,27 @@ class MainScreenViewModel(application: Application,
     }
 
     fun transcribeSample() = viewModelScope.launch {
-        transcribeAudio(getFirstSample())
+//        transcribeAudio(getFirstSample())
+        Log.i(TAG, "no")
     }
     fun transcribeAllSamples() = viewModelScope.launch {
-        val sampleFiles = samplesPath.listFiles()
-        if (sampleFiles != null) {
-            for (sampleFile in sampleFiles) {
-                transcribeAudio(sampleFile)
+        val directoryUri = Uri.parse(_selectedDirectory.value) // Get Uri from LiveData
+        val documentFile = DocumentFile.fromTreeUri(getApplication(), directoryUri)
+
+        if (documentFile != null && documentFile.isDirectory) {
+            val childFiles = documentFile.listFiles()
+            if (childFiles.isNotEmpty()) {
+                for (file in childFiles) {
+                    if (file.isFile) {
+                        transcribeAudio(file.uri) // Pass the file Uri to transcribeAudio
+                        startPlayback(file.uri)
+                    }
+                }
+            } else {
+                Log.e(TAG, "No files found in the selected directory.")
             }
         } else {
-            Log.e(LOG_TAG, "No files found in the directory.")
+            Log.e(TAG, "Invalid directory or unable to access files.")
         }
     }
 
@@ -228,17 +307,22 @@ class MainScreenViewModel(application: Application,
     private fun transcribeSelectedSample(sampleName: String) = viewModelScope.launch {
         val sampleFile = findSampleFileByName(sampleName)
         if (sampleFile != null) {
-            transcribeAudio(sampleFile)
+//            transcribeAudio(sampleFile)
+            Log.i(TAG, "nope")
         } else {
-            Log.e(LOG_TAG, "no file found")
+            Log.e(TAG, "no file found")
         }
     }
 
 
-    private suspend fun readAudioSamples(file: File): FloatArray = withContext(Dispatchers.IO) {
+    private suspend fun readAudioSamples(uri: Uri): FloatArray = withContext(Dispatchers.IO) {
         stopPlayback()
-        startPlayback(file)
-        return@withContext com.whispercppdemo.media.decodeWaveFile(file)
+        // 1. Open InputStream from Uri
+        val inputStream = getApplication<Application>().contentResolver.openInputStream(uri)
+            ?: throw IOException("Failed to open InputStream for $uri")
+
+        // 2. Decode audio samples from InputStream
+        return@withContext decodeInputStream(inputStream)
     }
 
 //    private suspend fun streamAudioSamples(shortArray: ShortArray): FloatArray = withContext(Dispatchers.IO) {
@@ -253,10 +337,18 @@ class MainScreenViewModel(application: Application,
         mediaPlayer = null
     }
 
-    private suspend fun startPlayback(file: File) = withContext(Dispatchers.Main) {
+    private suspend fun startoldPlayback(file: File) = withContext(Dispatchers.Main) {
         mediaPlayer = MediaPlayer.create(getApplication<Application>(), file.absolutePath.toUri())
         mediaPlayer?.start()
     }
+    private suspend fun startPlayback(uri: Uri) = withContext(Dispatchers.Main) {
+        mediaPlayer = MediaPlayer().apply {
+            setDataSource(getApplication(), uri) // Use setDataSource with Uri
+            prepare() // Prepare the MediaPlayer
+            start() // Start playback
+        }
+    }
+
 
     private val _transcriptionText = MutableLiveData<String>("")
     val transcriptionText: LiveData<String> = _transcriptionText
@@ -271,17 +363,27 @@ class MainScreenViewModel(application: Application,
             }
         }
     }
-    suspend fun logProcessingTime(sampleFile: File, sampleTimeLength: Long, elapsedProcessingTime: Long) {
-        withContext(Dispatchers.IO) {
-            val logFileName = "${sampleFile.nameWithoutExtension}_processingTime.txt"
-            val logFile = File(transcriptionsPath, logFileName)
 
-            logFile.bufferedWriter().use { out ->
-                out.write("Sample Time Length: $sampleTimeLength ms\n")
-                out.write("Elapsed Processing Time: $elapsedProcessingTime ms\n")
+    suspend fun logProcessingTime(fileName: String, sampleDuration: Int, elapsedProcessingTime: Long) {
+        withContext(Dispatchers.IO) {
+            val csvFileName = "$fileName.csv"
+            val csvFile = File(transcriptionsPath, csvFileName)
+
+            val writeHeaders = !csvFile.exists()
+
+            csvFile.bufferedWriter().use { out ->
+                if (writeHeaders) {
+                    out.write("Sample Name,Sample Time Length (ms),Elapsed Processing Time (ms)\n")
+                }
+
+                // Extract the name without extension for CSV logging
+                val nameWithoutExtension = fileName.substringBeforeLast('.')
+                out.write("$nameWithoutExtension,$sampleDuration,$elapsedProcessingTime\n")
             }
         }
     }
+
+
     suspend fun exportAllTranscriptionsToDownloads(context: Context) = withContext(Dispatchers.IO) {
         // Directory containing the transcription files
         val transcriptionsDir = File(context.filesDir, "transcriptions")
@@ -296,15 +398,26 @@ class MainScreenViewModel(application: Application,
             }
         }
     }
-    fun onexportAllTranscriptionsToDownloads(context: Context) {
+    fun onExportAllTranscriptionsToDownloads(context: Context) {
         viewModelScope.launch {
             // Assuming exportAllTranscriptionsToDownloads is defined elsewhere and is a suspend function
             exportAllTranscriptionsToDownloads(context)
         }
     }
 
+    private suspend fun saveTimestampsToFile(timestamps: List<Pair<Long, Long>>, filename: String) {
+        withContext(Dispatchers.IO) {
+            val outputFile = File(transcriptionsPath, "${filename}_timestamps.txt")
+            outputFile.bufferedWriter().use { out ->
+                timestamps.forEach { (start, end) ->
+                    out.write("Speech detected from ${start}ms to ${end}ms\n")
+                }
+            }
+        }
+    }
+
     @SuppressLint("RestrictedApi")
-    private suspend fun transcribeAudio(file: File) {
+    private suspend fun transcribeAudio(uri: Uri) {
         val canTranscribe = withContext(Dispatchers.Main) {
             _canTranscribe.value ?: false
         }
@@ -313,13 +426,24 @@ class MainScreenViewModel(application: Application,
         }
 
         try {
+            val inputStream = getApplication<Application>().contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                Log.e(TAG, "Failed to open InputStream from Uri: $uri")
+                return
+            }
             printMessage("Reading wave samples... ")
-            val data = readAudioSamples(file)
+            val data = readAudioSamples(uri)
+            val sampleDuration = data.size / (16000 / 1000)
             printMessage("${data.size / (16000 / 1000)} ms\n")
             printMessage("Transcribing data...\n")
+            val displayName = getApplication<Application>().contentResolver.query(uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                cursor.moveToFirst()
+                cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+            } ?: "transcription.txt"
+
             val start = System.currentTimeMillis()
             val text = whisperContext?.transcribeData(data)
-            //text to be processed and then sent to SQL
             if(text != null) {
                 withContext(Dispatchers.Main) {
                     // Update transcriptionText LiveData with the new transcription
@@ -328,13 +452,17 @@ class MainScreenViewModel(application: Application,
                         Log.i(TAG, "Text: $text")
                     }
                 }
-                val transcriptionFileName = "${file.nameWithoutExtension}_transcription.txt"
+                val elapsed = System.currentTimeMillis() - start
+
+                val transcriptionFileName = "${displayName.substringBeforeLast('.')}_transcription.txt"
+                val processingTimeFileName = "${displayName.substringBeforeLast('.')}_processingTime"
+                logProcessingTime(processingTimeFileName, sampleDuration, elapsed)
+
+
                 saveTranscriptionToFile(text, transcriptionFileName)
+                printMessage("Done ($elapsed ms): $text\n")
             }
 
-            val elapsed = System.currentTimeMillis() - start
-            printMessage("Done ($elapsed ms): $text\n")
-            logProcessingTime(file, start, elapsed)
         } catch (e: Exception) {
             Log.w(LOG_TAG, e)
             printMessage("${e.localizedMessage}\n")
@@ -448,7 +576,8 @@ class MainScreenViewModel(application: Application,
                 recorder.stopRecording()
                 _isRecording.value = false
                 recordedFile?.let {
-                    transcribeAudio(it)
+//                    transcribeAudio(it)
+                    Log.i(TAG, "Old recording, used to provide FILE")
                 }
             } else {
                 stopPlayback()
